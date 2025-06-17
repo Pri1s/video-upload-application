@@ -1,0 +1,285 @@
+# Imports
+import os
+
+from flask import Flask, request, jsonify, make_response
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate  # For handling database migrations
+
+import uuid  # For generating unique IDs (in this case, for users)
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename  # For securely handling file uploads
+
+import jwt  # For handling JSON Web Tokens (JWTs) for authentication
+import datetime  # For handling date and time, especially for token expiration
+from functools import wraps
+
+app = Flask(__name__)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///movies.db"
+app.config["JWT_SECRET_KEY"] = "temporary_secret"
+app.config["UPLOADS_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
+
+db = SQLAlchemy(app)
+migrate = Migrate(app, db)  # Initialize Flask-Migrate with the app and db
+
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    public_id = db.Column(db.String(50), unique=True)
+    username = db.Column(db.String(80), unique=True, nullable=False)
+    password = db.Column(db.String(120), nullable=False)
+    admin = db.Column(db.Boolean, default=False)
+
+
+class Image(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(120), nullable=False)
+    description = db.Column(db.String(1000), nullable=True)
+    date_created = db.Column(db.DateTime, default=datetime.datetime.utcnow)
+    user_id = db.Column(db.Integer, nullable=False)
+
+
+def token_required(f):
+    # Use wraps to preserve the original function's metadata
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        # Initialize token variable
+        token = None
+
+        # Check if token exists in request headers under 'x-access-token'
+        if "x-access-token" in request.headers:
+            # Get the token value from headers
+            token = request.headers["x-access-token"]
+        else:
+            # Return error if no token is provided
+            return jsonify({"message": "Token is missing!"}), 401
+
+        try:
+            # Decode the token using the secret key
+            data = jwt.decode(token, app.config["JWT_SECRET_KEY"], algorithms=["HS256"])
+            # Query database to find user with matching public_id from token
+            current_user = User.query.filter_by(public_id=data["public_id"]).first()
+        except Exception as e:
+            # Return error if token is invalid or expired
+            return jsonify({"message": "Token is invalid!"}), 401
+
+        # Call the original function with the authenticated user and any other arguments
+        return f(current_user, *args, **kwargs)
+
+    # Return the decorated function
+    return decorated
+
+
+# User handling routes
+@app.route("/user", methods=["GET"])
+@token_required  # Protect this route with token authentication
+def get_all_users(current_user):
+    if not current_user.admin:
+        return jsonify({"message": "Cannot perform this action!"}), 403
+    users = User.query.all()
+    output = []  # List to hold user data upon querying the database
+    for user in users:
+        user_data = {
+            "public_id": user.public_id,
+            "username": user.username,
+            "password": user.password,  # Note: In a real application, do not return passwords
+            "admin": user.admin,
+        }
+        output.append(user_data)
+    return jsonify({"users": output})
+
+
+@app.route("/user/<public_id>", methods=["GET"])
+@token_required
+def get_one_user(current_user, public_id):
+    if not current_user.admin:
+        return jsonify({"message": "Cannot perform this action!"}), 403
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({"message": "User not found!"}), 404
+    user_data = {
+        "public_id": user.public_id,
+        "username": user.username,
+        "password": user.password,  # Note: In a real application, do not return passwords
+        "admin": user.admin,
+    }
+    return jsonify({"user": user_data})
+
+
+@app.route("/user", methods=["POST"])
+@token_required
+def create_user(current_user):
+    if not current_user.admin:
+        return jsonify({"message": "Cannot perform this action!"}), 403
+    data = request.get_json()
+    hashed_password = generate_password_hash(data["password"], method="pbkdf2:sha256")
+    new_user = User(
+        public_id=str(
+            uuid.uuid4()
+        ),  # Generate a unique public ID for the user using uuid version 4
+        username=data["username"],
+        password=hashed_password,
+        admin=False,
+    )
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"message": "User created successfully!"}), 201
+
+
+@app.route("/user/<public_id>", methods=["PUT"])
+@token_required
+def promote_user(current_user, public_id):  # Promote given user into an admin
+    if not current_user.admin:
+        return jsonify({"message": "Cannot perform this action!"}), 403
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({"message": "User not found!"}), 404
+    user.admin = True
+    db.session.commit()
+    return jsonify({"message": "User promoted to admin!"})
+
+
+@app.route("/user/<public_id>", methods=["DELETE"])
+@token_required
+def delete_user(current_user, public_id):
+    if not current_user.admin:
+        return jsonify({"message": "Cannot perform this action!"}), 403
+    user = User.query.filter_by(public_id=public_id).first()
+    if not user:
+        return jsonify({"message": "User not found!"}), 404
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({"message": "User deleted successfully!"})
+
+
+# Login routes
+@app.route("/login")
+def login():  # Get request by default
+    auth = (
+        request.authorization
+    )  # Get the authorization header (information) from the request
+    if not auth or not auth.username or not auth.password:
+        return make_response(
+            "Coult not verify!",
+            401,
+            {
+                "WWW-Authenticate": 'Basic realm="Login required"'
+            },  # This is the header that will be sent back to the client
+        )
+
+    user = User.query.filter_by(username=auth.username).first()
+    if not user or not check_password_hash(user.password, auth.password):
+        return make_response(
+            "Could not verify!",
+            401,
+            {
+                "WWW-Authenticate": 'Basic realm="Login required"'
+            },  # This is the header that will be sent back to the client
+        )
+
+    user = User.query.filter_by(username=auth.username).first()
+    if not user or not check_password_hash(user.password, auth.password):
+        return make_response(
+            "Could not verify!",
+            401,
+            {"WWW-Authenticate": 'Basic realm="Login required"'},
+        )
+    token = jwt.encode(
+        {
+            "public_id": user.public_id,
+            "exp": datetime.datetime.utcnow()
+            + datetime.timedelta(minutes=30),  # Token expiration time set to 30 minutes
+        },
+        app.config["JWT_SECRET_KEY"],  # Secret key for encoding the JWT
+        algorithm="HS256",
+    )
+    return jsonify(
+        {
+            "message": "Login successful!",
+            "public_id": user.public_id,
+            "token": token,
+        }
+    )
+
+
+# Image handling routes
+@app.route("/image", methods=["GET"])
+@token_required
+def get_all_images(current_user):
+    images = Image.query.all()
+    output = []
+    for image in images:
+        # if image.user_id == current_user.id:
+        image_data = {
+            "id": image.id,
+            "title": image.title,
+            "description": image.description,
+            "date_created": image.date_created,
+            "user_id": image.user_id,
+        }
+        output.append(image_data)
+    return jsonify({"images": output})
+
+
+@app.route("/upload", methods=["POST"])
+@token_required
+def upload_image(current_user):
+    try:
+        # Check if image file is present in request
+        if "image" not in request.files:
+            return jsonify({"error": "No image file provided"}), 400
+
+        file = request.files["image"]
+
+        # Check if filename is empty
+        if file.filename == "":
+            return jsonify({"error": "No selected file"}), 400
+
+        # Check if file extension is allowed
+        allowed_extensions = {"png", "jpg", "jpeg", "gif"}
+        if (
+            "." not in file.filename
+            or file.filename.rsplit(".", 1)[1].lower() not in allowed_extensions
+        ):
+            return jsonify({"error": "Invalid file type"}), 400
+
+        # Generate secure filename
+        filename = secure_filename(file.filename)
+
+        # Create uploads directory if it doesn't exist
+        upload_folder = os.path.join(app.root_path, "static", "uploads")
+        os.makedirs(upload_folder, exist_ok=True)
+
+        # Save the file
+        file_path = os.path.join(upload_folder, filename)
+        file.save(file_path)
+
+        # Get title and description from form data (optional)
+        title = request.form.get("title", filename)
+        description = request.form.get("description", "")
+
+        # Create new Image instance and add to database
+        new_image = Image(
+            title=title,
+            description=description,
+            user_id=current_user.public_id,  # Use public_id as user_id
+        )
+        db.session.add(new_image)
+        db.session.commit()
+
+        # Return success response with file path
+        return jsonify(
+            {
+                "message": "Image uploaded successfully",
+                "filename": filename,
+                "path": f"/static/uploads/{filename}",
+                "image_id": new_image.id,
+            }
+        ), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
