@@ -10,6 +10,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename  # For securely handling file uploads
 
 import jwt  # For handling JSON Web Tokens (JWTs) for authentication
+import time  # For handling time-related operations, especially for token expiration
+import uuid  # For generating unique identifiers
 import datetime  # For handling date and time, especially for token expiration
 from functools import wraps
 
@@ -35,6 +37,7 @@ class Image(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(120), nullable=False)
     description = db.Column(db.String(1000), nullable=True)
+    filename = db.Column(db.String(255), nullable=False)  # Add this line
     date_created = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     user_id = db.Column(db.Integer, nullable=False)
 
@@ -206,32 +209,39 @@ def login():  # Get request by default
 @app.route("/image", methods=["GET"])
 @token_required
 def get_all_images(current_user):
-    images = Image.query.all()
+    images = Image.query.filter_by(user_id=current_user.public_id).all()
     output = []
+
     for image in images:
-        # if image.user_id == current_user.id:
-        image_data = {
-            "id": image.id,
-            "title": image.title,
-            "description": image.description,
-            "date_created": image.date_created,
-            "user_id": image.user_id,
-        }
-        output.append(image_data)
+        if image.user_id == current_user.public_id:
+            image_data = {
+                "id": image.id,
+                "title": image.title,
+                "description": image.description,
+                "date_created": image.date_created,
+                "user_id": image.user_id,
+                "url": f"/static/uploads/{image.filename}",  # Generate URL for the image
+            }
+            output.append(image_data)
+
     return jsonify({"images": output})
+
+
+@app.route("/image/<image_id>", methods=["GET"])
+@token_required
+def get_one_image(current_user, image_id):
+    return ""
 
 
 @app.route("/upload", methods=["POST"])
 @token_required
 def upload_image(current_user):
     try:
-        # Check if image file is present in request
         if "image" not in request.files:
             return jsonify({"error": "No image file provided"}), 400
 
         file = request.files["image"]
 
-        # Check if filename is empty
         if file.filename == "":
             return jsonify({"error": "No selected file"}), 400
 
@@ -243,36 +253,38 @@ def upload_image(current_user):
         ):
             return jsonify({"error": "Invalid file type"}), 400
 
-        # Generate secure filename
-        filename = secure_filename(file.filename)
+        # Generate unique filename
+        original_filename = secure_filename(file.filename)
+        file_extension = original_filename.rsplit(".", 1)[1].lower()
+        unique_filename = f"{uuid.uuid4().hex}_{int(time.time())}.{file_extension}"
 
         # Create uploads directory if it doesn't exist
         upload_folder = os.path.join(app.root_path, "static", "uploads")
         os.makedirs(upload_folder, exist_ok=True)
 
-        # Save the file
-        file_path = os.path.join(upload_folder, filename)
+        # Save the file with unique filename
+        file_path = os.path.join(upload_folder, unique_filename)
         file.save(file_path)
 
-        # Get title and description from form data (optional)
-        title = request.form.get("title", filename)
+        # Get title and description from form data
+        title = request.form.get("title", original_filename)
         description = request.form.get("description", "")
 
         # Create new Image instance and add to database
         new_image = Image(
             title=title,
             description=description,
-            user_id=current_user.public_id,  # Use public_id as user_id
+            filename=unique_filename,  # Store the unique filename in database
+            user_id=current_user.public_id,
         )
         db.session.add(new_image)
         db.session.commit()
 
-        # Return success response with file path
         return jsonify(
             {
                 "message": "Image uploaded successfully",
-                "filename": filename,
-                "path": f"/static/uploads/{filename}",
+                "filename": unique_filename,
+                "path": f"/static/uploads/{unique_filename}",
                 "image_id": new_image.id,
             }
         ), 200
