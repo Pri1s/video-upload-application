@@ -5,6 +5,12 @@ from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate  # For handling database migrations
 
+from dataplane import (
+    s3_upload,
+)  # Importing the s3_upload function from dataplane module
+import boto3  # For interacting with AWS S3 and Cloudflare R2
+from botocore.config import Config  # For configuring the S3 client
+
 import uuid  # For generating unique IDs (in this case, for users)
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename  # For securely handling file uploads
@@ -20,9 +26,28 @@ app = Flask(__name__)
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///movies.db"
 app.config["JWT_SECRET_KEY"] = "temporary_secret"
 app.config["UPLOADS_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
+app.config["CLOUDFLARE_ACCOUNT_ID"] = "9648112a9e151c1b4a5206f6fa027450"
+app.config["CLOUDFLARE_BUCKET_NAME"] = "video-upload-application-storage"
+app.config["CLIENT_ACCESS_KEY"] = "54020df3eeabfae174e565a0b6b532bd"
+app.config["CLIENT_SECRET_KEY"] = (
+    "8b7161cc2179dd6f693e5048364baa07902f0b58bdd016f9e5c2c4b95d518bdf"
+)
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)  # Initialize Flask-Migrate with the app and db
+
+cloudflare_connection_url = (
+    f"https://{app.config['CLOUDFLARE_ACCOUNT_ID']}.r2.cloudflarestorage.com"
+)
+
+s3_connect = boto3.client(
+    "s3",
+    endpoint_url=cloudflare_connection_url,
+    aws_access_key_id=app.config["CLIENT_ACCESS_KEY"],
+    aws_secret_access_key=app.config["CLIENT_SECRET_KEY"],
+    config=Config(signature_version="s3v4"),
+    region_name="us-east-1",
+)
 
 
 class User(db.Model):
@@ -196,6 +221,10 @@ def login():  # Get request by default
         app.config["JWT_SECRET_KEY"],  # Secret key for encoding the JWT
         algorithm="HS256",
     )
+    # Ensure token is a string for JSON serialization
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+
     return jsonify(
         {
             "message": "Login successful!",
@@ -258,13 +287,13 @@ def upload_image(current_user):
         file_extension = original_filename.rsplit(".", 1)[1].lower()
         unique_filename = f"{uuid.uuid4().hex}_{int(time.time())}.{file_extension}"
 
-        # Create uploads directory if it doesn't exist
-        upload_folder = os.path.join(app.root_path, "static", "uploads")
-        os.makedirs(upload_folder, exist_ok=True)
-
-        # Save the file with unique filename
-        file_path = os.path.join(upload_folder, unique_filename)
-        file.save(file_path)
+        # Upload file to Cloudflare R2
+        s3_connect.upload_fileobj(
+            file,
+            app.config["CLOUDFLARE_BUCKET_NAME"],
+            unique_filename,
+            ExtraArgs={"ContentType": file.content_type},
+        )
 
         # Get title and description from form data
         title = request.form.get("title", original_filename)
@@ -274,17 +303,20 @@ def upload_image(current_user):
         new_image = Image(
             title=title,
             description=description,
-            filename=unique_filename,  # Store the unique filename in database
+            filename=unique_filename,
             user_id=current_user.public_id,
         )
         db.session.add(new_image)
         db.session.commit()
 
+        # Generate public URL (note: not accessible unless R2 bucket is public or proxied)
+        public_url = f"{cloudflare_connection_url}/{app.config['CLOUDFLARE_BUCKET_NAME']}/{unique_filename}"
+
         return jsonify(
             {
-                "message": "Image uploaded successfully",
+                "message": "Image uploaded to R2 successfully",
                 "filename": unique_filename,
-                "path": f"/static/uploads/{unique_filename}",
+                "cloudflare_url": public_url,
                 "image_id": new_image.id,
             }
         ), 200
