@@ -296,7 +296,14 @@ def upload_image(current_user):
                 file,
                 app.config["CLOUDFLARE_BUCKET_NAME"],
                 unique_filename,
-                ExtraArgs={"ContentType": file.content_type},
+                ExtraArgs={
+                    "ContentType": file.content_type,
+                    "Metadata": {
+                        "uploaded_by": str(current_user.public_id),
+                        "original_filename": original_filename,
+                        # Add more key-value pairs as needed
+                    },
+                },
             )
 
             # Get title and description from form data (support per-file if needed)
