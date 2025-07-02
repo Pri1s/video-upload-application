@@ -62,7 +62,8 @@ class Image(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(120), nullable=False)
     description = db.Column(db.String(1000), nullable=True)
-    filename = db.Column(db.String(255), nullable=False)  # Add this line
+    filename = db.Column(db.String(255), nullable=False)
+    cloudflare_url = db.Column(db.String(1000), nullable=True)
     date_created = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     user_id = db.Column(db.Integer, nullable=False)
 
@@ -249,7 +250,7 @@ def get_all_images(current_user):
                 "description": image.description,
                 "date_created": image.date_created,
                 "user_id": image.user_id,
-                "url": f"/static/uploads/{image.filename}",  # Generate URL for the image
+                "url": image.cloudflare_url,  # Generate URL for the image
             }
             output.append(image_data)
 
@@ -266,62 +267,73 @@ def get_one_image(current_user, image_id):
 @token_required
 def upload_image(current_user):
     try:
-        if "image" not in request.files:
-            return jsonify({"error": "No image file provided"}), 400
+        # Accept multiple files from the 'image' field
+        files = request.files.getlist("image")
+        if not files or files == [None]:
+            return jsonify({"error": "No image file(s) provided"}), 400
 
-        file = request.files["image"]
-
-        if file.filename == "":
-            return jsonify({"error": "No selected file"}), 400
-
-        # Check if file extension is allowed
         allowed_extensions = {"png", "jpg", "jpeg", "gif"}
-        if (
-            "." not in file.filename
-            or file.filename.rsplit(".", 1)[1].lower() not in allowed_extensions
-        ):
-            return jsonify({"error": "Invalid file type"}), 400
+        uploaded_images = []
 
-        # Generate unique filename
-        original_filename = secure_filename(file.filename)
-        file_extension = original_filename.rsplit(".", 1)[1].lower()
-        unique_filename = f"{uuid.uuid4().hex}_{int(time.time())}.{file_extension}"
+        for file in files:
+            if not file or file.filename == "":
+                continue  # Skip empty files
 
-        # Upload file to Cloudflare R2
-        s3_connect.upload_fileobj(
-            file,
-            app.config["CLOUDFLARE_BUCKET_NAME"],
-            unique_filename,
-            ExtraArgs={"ContentType": file.content_type},
-        )
+            # Check if file extension is allowed
+            if (
+                "." not in file.filename
+                or file.filename.rsplit(".", 1)[1].lower() not in allowed_extensions
+            ):
+                continue  # Skip invalid file types
 
-        # Get title and description from form data
-        title = request.form.get("title", original_filename)
-        description = request.form.get("description", "")
+            # Generate unique filename
+            original_filename = secure_filename(file.filename)
+            file_extension = original_filename.rsplit(".", 1)[1].lower()
+            unique_filename = f"{uuid.uuid4().hex}_{int(time.time())}.{file_extension}"
 
-        # Create new Image instance and add to database
-        new_image = Image(
-            title=title,
-            description=description,
-            filename=unique_filename,
-            user_id=current_user.public_id,
-        )
-        db.session.add(new_image)
+            # Upload file to Cloudflare R2
+            s3_connect.upload_fileobj(
+                file,
+                app.config["CLOUDFLARE_BUCKET_NAME"],
+                unique_filename,
+                ExtraArgs={"ContentType": file.content_type},
+            )
+
+            # Get title and description from form data (support per-file if needed)
+            title = request.form.get("title", original_filename)
+            description = request.form.get("description", "")
+
+            public_url = f"{cloudflare_connection_url}/{app.config['CLOUDFLARE_BUCKET_NAME']}/{unique_filename}"
+
+            # Create new Image instance and add to database
+            new_image = Image(
+                title=title,
+                description=description,
+                filename=unique_filename,
+                cloudflare_url=public_url,
+                user_id=current_user.public_id,
+            )
+            db.session.add(new_image)
+            db.session.flush()  # Get new_image.id before commit
+
+            uploaded_images.append(
+                {
+                    "message": "Image uploaded to R2 successfully",
+                    "filename": unique_filename,
+                    "cloudflare_url": public_url,
+                    "image_id": new_image.id,
+                }
+            )
+
         db.session.commit()
 
-        # Generate public URL (note: not accessible unless R2 bucket is public or proxied)
-        public_url = f"{cloudflare_connection_url}/{app.config['CLOUDFLARE_BUCKET_NAME']}/{unique_filename}"
+        if not uploaded_images:
+            return jsonify({"error": "No valid images uploaded"}), 400
 
-        return jsonify(
-            {
-                "message": "Image uploaded to R2 successfully",
-                "filename": unique_filename,
-                "cloudflare_url": public_url,
-                "image_id": new_image.id,
-            }
-        ), 200
+        return jsonify({"uploaded_images": uploaded_images}), 200
 
     except Exception as e:
+        db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
 
