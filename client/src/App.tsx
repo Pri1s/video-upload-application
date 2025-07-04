@@ -1,35 +1,24 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import "./styles.css"; // Import global styles
+import Form from "./components/Form"; // Import the Form component
 
-function App() {
-  const [count, setCount] = useState(0)
-
+// Main App component
+const App = () => {
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+    // Flex container to center content and take full viewport height
+    <div className="flex w-full h-screen">
+      {/* Responsive container: full width on mobile, half width on large screens */}
+      <div className="flex items-center justify-center w-full lg:w-1/2">
+        <Form /> {/* Render the Form component */}
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
+      {/* Decorative side panel, only visible on large screens */}
+      <div className="hidden lg:flex h-full w-1/2 relative items-center justify-center bg-gray-200">
+        {/* Gradient circle for visual appeal */}
+        <div className="w-60 h-60 bg-gradient-to-tr from-violet-500 to-pink-500 rounded-full animate-bounce" />
+        {/* Semi-transparent overlay with blur effect */}
+        <div className="w-full h-1/2 bottom-0 absolute bg-white/10 backdrop-blur-lg" />
       </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
-}
+    </div>
+  );
+};
 
-export default App
+export default App; // Export App as default
