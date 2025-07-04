@@ -13,7 +13,7 @@ const App = () => {
       {/* Decorative side panel, only visible on large screens */}
       <div className="hidden lg:flex h-full w-1/2 relative items-center justify-center bg-gray-200">
         {/* Gradient circle for visual appeal */}
-        <div className="w-60 h-60 bg-gradient-to-tr from-violet-500 to-pink-500 rounded-full animate-bounce" />
+        <div className="w-60 h-60 bg-gradient-to-tr from-white-500 to-black rounded-full animate-bounce" />
         {/* Semi-transparent overlay with blur effect */}
         <div className="w-full h-1/2 bottom-0 absolute bg-white/10 backdrop-blur-lg" />
       </div>

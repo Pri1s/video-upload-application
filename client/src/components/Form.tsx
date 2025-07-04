@@ -1,6 +1,6 @@
 const Form = () => {
   return (
-    <div className="bg-white px-10 py-20 rounded-md border-2 border-gray-200">
+    <div className="bg-white px-20 py-20 rounded-lg border-2 border-gray-200 shadow-xl">
       {/* Heading for the form */}
       <h1 className="text-5xl font-semibold">Welcome Back</h1>
       {/* Subheading with instructions */}
@@ -26,15 +26,9 @@ const Form = () => {
             className="w-full border border-gray-300 p-2 rounded-md mt-1"
           />
         </div>
-        <div className="flex mt-8 justify-between items-center">
-          <div>
-            <input type="checkbox" id="remember" />
-            <label htmlFor="remember" className="ml-2 font-medium text-base">
-              Remember for 30 days
-            </label>
-          </div>
-          <button className="font-medium text-base text-violet-500">
-            Forgot password
+        <div className="mt-8 flex flex-col gap-y-4">
+          <button className="py-2 border border-gray-300 bg-black text-lg text-white font-bold rounded-md hover:bg-gray-800 active:scale-[0.85] transition-all duration-200">
+            Sign in
           </button>
         </div>
       </div>
