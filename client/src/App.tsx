@@ -1,6 +1,5 @@
 import "./styles.css"; // Import global styles
 import Form from "./components/Form"; // Import the Form component
-
 // Main App component
 const App = () => {
   return (

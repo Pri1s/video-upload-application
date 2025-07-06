@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate  # For handling database migrations
 
+from flask_cors import CORS
+
 from dataplane import (
     s3_upload,
 )  # Importing the s3_upload function from dataplane module
@@ -35,6 +37,7 @@ app.config["CLIENT_SECRET_KEY"] = (
 
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)  # Initialize Flask-Migrate with the app and db
+CORS(app, origins=["http://localhost:5000"])  # Allow CORS for the frontend
 
 cloudflare_connection_url = (
     f"https://{app.config['CLOUDFLARE_ACCOUNT_ID']}.r2.cloudflarestorage.com"
@@ -345,4 +348,6 @@ def upload_image(current_user):
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(
+        debug=True, port=5000
+    )  # Ensure the server runs on port 5000 for compatibility with the frontend
