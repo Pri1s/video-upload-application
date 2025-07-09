@@ -1,11 +1,11 @@
 # Imports
 import os
 
-from flask import Flask, request, jsonify, make_response
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, request, jsonify, make_response  # Flask core imports
+from flask_sqlalchemy import SQLAlchemy  # ORM for database operations
 from flask_migrate import Migrate  # For handling database migrations
 
-from flask_cors import CORS
+from flask_cors import CORS  # For handling CORS
 
 from dataplane import (
     s3_upload,
@@ -21,12 +21,12 @@ import jwt  # For handling JSON Web Tokens (JWTs) for authentication
 import time  # For handling time-related operations, especially for token expiration
 import uuid  # For generating unique identifiers
 import datetime  # For handling date and time, especially for token expiration
-from functools import wraps
+from functools import wraps  # For creating decorators
 
 app = Flask(__name__)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///movies.db"
-app.config["JWT_SECRET_KEY"] = "temporary_secret"
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///movies.db"  # SQLite DB config
+app.config["JWT_SECRET_KEY"] = "temporary_secret"  # Secret key for JWT
 app.config["UPLOADS_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
 app.config["CLOUDFLARE_ACCOUNT_ID"] = "9648112a9e151c1b4a5206f6fa027450"
 app.config["CLOUDFLARE_BUCKET_NAME"] = "video-upload-application-storage"
@@ -35,14 +35,15 @@ app.config["CLIENT_SECRET_KEY"] = (
     "8b7161cc2179dd6f693e5048364baa07902f0b58bdd016f9e5c2c4b95d518bdf"
 )
 
-db = SQLAlchemy(app)
+db = SQLAlchemy(app)  # Initialize SQLAlchemy
 migrate = Migrate(app, db)  # Initialize Flask-Migrate with the app and db
-CORS(app, origins=["http://localhost:5000"])  # Allow CORS for the frontend
+CORS(app)  # Enable CORS for all routes
 
 cloudflare_connection_url = (
     f"https://{app.config['CLOUDFLARE_ACCOUNT_ID']}.r2.cloudflarestorage.com"
 )
 
+# Create S3 client for Cloudflare R2
 s3_connect = boto3.client(
     "s3",
     endpoint_url=cloudflare_connection_url,
@@ -53,6 +54,7 @@ s3_connect = boto3.client(
 )
 
 
+# User model for database
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     public_id = db.Column(db.String(50), unique=True)
@@ -61,6 +63,7 @@ class User(db.Model):
     admin = db.Column(db.Boolean, default=False)
 
 
+# Image model for database
 class Image(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(120), nullable=False)
@@ -71,45 +74,38 @@ class Image(db.Model):
     user_id = db.Column(db.Integer, nullable=False)
 
 
+# Decorator to require JWT token for protected routes
 def token_required(f):
-    # Use wraps to preserve the original function's metadata
     @wraps(f)
     def decorated(*args, **kwargs):
-        # Initialize token variable
         token = None
 
         # Check if token exists in request headers under 'x-access-token'
         if "x-access-token" in request.headers:
-            # Get the token value from headers
             token = request.headers["x-access-token"]
         else:
-            # Return error if no token is provided
             return jsonify({"message": "Token is missing!"}), 401
 
         try:
             # Decode the token using the secret key
             data = jwt.decode(token, app.config["JWT_SECRET_KEY"], algorithms=["HS256"])
-            # Query database to find user with matching public_id from token
             current_user = User.query.filter_by(public_id=data["public_id"]).first()
         except Exception as e:
-            # Return error if token is invalid or expired
             return jsonify({"message": "Token is invalid!"}), 401
 
-        # Call the original function with the authenticated user and any other arguments
         return f(current_user, *args, **kwargs)
 
-    # Return the decorated function
     return decorated
 
 
 # User handling routes
 @app.route("/user", methods=["GET"])
-@token_required  # Protect this route with token authentication
+@token_required
 def get_all_users(current_user):
     if not current_user.admin:
         return jsonify({"message": "Cannot perform this action!"}), 403
     users = User.query.all()
-    output = []  # List to hold user data upon querying the database
+    output = []
     for user in users:
         user_data = {
             "public_id": user.public_id,
@@ -146,9 +142,7 @@ def create_user(current_user):
     data = request.get_json()
     hashed_password = generate_password_hash(data["password"], method="pbkdf2:sha256")
     new_user = User(
-        public_id=str(
-            uuid.uuid4()
-        ),  # Generate a unique public ID for the user using uuid version 4
+        public_id=str(uuid.uuid4()),  # Generate a unique public ID for the user
         username=data["username"],
         password=hashed_password,
         admin=False,
@@ -160,7 +154,7 @@ def create_user(current_user):
 
 @app.route("/user/<public_id>", methods=["PUT"])
 @token_required
-def promote_user(current_user, public_id):  # Promote given user into an admin
+def promote_user(current_user, public_id):
     if not current_user.admin:
         return jsonify({"message": "Cannot perform this action!"}), 403
     user = User.query.filter_by(public_id=public_id).first()
@@ -184,29 +178,15 @@ def delete_user(current_user, public_id):
     return jsonify({"message": "User deleted successfully!"})
 
 
-# Login routes
+# Login route
 @app.route("/login")
-def login():  # Get request by default
-    auth = (
-        request.authorization
-    )  # Get the authorization header (information) from the request
+def login():
+    auth = request.authorization  # Get the authorization header from the request
     if not auth or not auth.username or not auth.password:
-        return make_response(
-            "Coult not verify!",
-            401,
-            {
-                "WWW-Authenticate": 'Basic realm="Login required"'
-            },  # This is the header that will be sent back to the client
-        )
-
-    user = User.query.filter_by(username=auth.username).first()
-    if not user or not check_password_hash(user.password, auth.password):
         return make_response(
             "Could not verify!",
             401,
-            {
-                "WWW-Authenticate": 'Basic realm="Login required"'
-            },  # This is the header that will be sent back to the client
+            {"WWW-Authenticate": 'Basic realm="Login required"'},
         )
 
     user = User.query.filter_by(username=auth.username).first()
@@ -219,13 +199,11 @@ def login():  # Get request by default
     token = jwt.encode(
         {
             "public_id": user.public_id,
-            "exp": datetime.datetime.utcnow()
-            + datetime.timedelta(minutes=30),  # Token expiration time set to 30 minutes
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=30),
         },
-        app.config["JWT_SECRET_KEY"],  # Secret key for encoding the JWT
+        app.config["JWT_SECRET_KEY"],
         algorithm="HS256",
     )
-    # Ensure token is a string for JSON serialization
     if isinstance(token, bytes):
         token = token.decode("utf-8")
 
@@ -246,16 +224,24 @@ def get_all_images(current_user):
     output = []
 
     for image in images:
-        if image.user_id == current_user.public_id:
-            image_data = {
-                "id": image.id,
-                "title": image.title,
-                "description": image.description,
-                "date_created": image.date_created,
-                "user_id": image.user_id,
-                "url": image.cloudflare_url,  # Generate URL for the image
-            }
-            output.append(image_data)
+        # Generate a signed URL for each image (valid for 10 minutes)
+        signed_url = s3_connect.generate_presigned_url(
+            ClientMethod="get_object",
+            Params={
+                "Bucket": app.config["CLOUDFLARE_BUCKET_NAME"],
+                "Key": image.filename,
+            },
+            ExpiresIn=600,  # 600 seconds = 10 minutes
+        )
+        image_data = {
+            "id": image.id,
+            "title": image.title,
+            "description": image.description,
+            "date_created": image.date_created,
+            "user_id": image.user_id,
+            "url": signed_url,  # Use signed URL instead of public URL
+        }
+        output.append(image_data)
 
     return jsonify({"images": output})
 
@@ -263,15 +249,16 @@ def get_all_images(current_user):
 @app.route("/image/<image_id>", methods=["GET"])
 @token_required
 def get_one_image(current_user, image_id):
-    return ""
+    return ""  # Placeholder for single image retrieval
 
 
 @app.route("/upload", methods=["POST"])
 @token_required
 def upload_image(current_user):
     try:
-        # Accept multiple files from the 'image' field
-        files = request.files.getlist("image")
+        files = request.files.getlist(
+            "image"
+        )  # Accept multiple files from the 'image' field
         if not files or files == [None]:
             return jsonify({"error": "No image file(s) provided"}), 400
 
@@ -304,12 +291,11 @@ def upload_image(current_user):
                     "Metadata": {
                         "uploaded_by": str(current_user.public_id),
                         "original_filename": original_filename,
-                        # Add more key-value pairs as needed
                     },
                 },
             )
 
-            # Get title and description from form data (support per-file if needed)
+            # Get title and description from form data
             title = request.form.get("title", original_filename)
             description = request.form.get("description", "")
 
@@ -348,6 +334,4 @@ def upload_image(current_user):
 
 
 if __name__ == "__main__":
-    app.run(
-        debug=True, port=5000
-    )  # Ensure the server runs on port 5000 for compatibility with the frontend
+    app.run(debug=True)  # Run the Flask app in debug mode
