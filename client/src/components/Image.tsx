@@ -1,4 +1,4 @@
-import React from "react"; // Import React
+import { Card, CardTitle, CardDescription } from "./ui/card";
 
 interface ImageProps {
   id: number;
@@ -11,16 +11,12 @@ interface ImageProps {
 
 const Image = ({ title, description, url }: ImageProps) => {
   return (
-    <div className="border rounded shadow p-4 flex flex-col items-center">
-      <img
-        src={url} // Image source URL
-        alt={title} // Alt text for accessibility
-        className="w-full h-48 object-cover rounded mb-2"
-      />
-      <h2 className="font-bold text-lg">{title}</h2>
-      {description && <p className="text-gray-600">{description}</p>}{" "}
-      {/* Show description if available */}
-    </div>
+    <Card className="px-2">
+      <img src={url} alt={title} className="w-full h-auto rounded-lg" />
+      <CardTitle>{title}</CardTitle>
+      <CardDescription>{description}</CardDescription>
+      {/* Additional content can be added here */}
+    </Card>
   );
 };
 

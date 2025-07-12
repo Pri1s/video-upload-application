@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react"; // Import React and hooks
+import { useEffect, useState } from "react"; // Import React and hooks
 import Image from "../components/Image"; // Import the Image component
 
 interface ImageData {
@@ -35,9 +35,14 @@ const ImageList = () => {
           throw new Error(`Failed to fetch images: ${response.statusText}`);
         }
         const data = await response.json(); // Parse JSON response
+        console.log("Fetched images:", data); // Log fetched images for debugging
         setImages(data.images || []); // Update images state
-      } catch (err: any) {
-        setError(err.message || "An error occurred while fetching images."); // Set error message
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setError(err.message || "An error occurred while fetching images."); // Set error message
+        } else {
+          setError("An error occurred while fetching images."); // Set generic error message
+        }
       } finally {
         setLoading(false); // Set loading to false after fetch
       }
